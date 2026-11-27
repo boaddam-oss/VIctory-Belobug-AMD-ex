@@ -401,7 +401,23 @@ pub(crate) fn ram_idle_ms(avail_phys: Option<u64>) -> u64 {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
     };
-    ram_idle_for(effective, keep_freed() && !crate::residency::limited_host_ram())
+    let keep = keep_freed() && !crate::residency::limited_host_ram() && !near_commit_limit();
+    ram_idle_for(effective, keep)
+}
+
+/// Avoid retaining five-minute caches when this process is already using
+/// 70% of the smaller of physical RAM and the Windows commit limit.
+fn near_commit_limit() -> bool {
+    ram_sample().is_some_and(|(_, private, _, _, total, limit)| private_near_limit(private, total, limit))
+}
+
+fn private_near_limit(private: u64, total_physical: u64, commit_limit: u64) -> bool {
+    let room = match (total_physical, commit_limit) {
+        (0, 0) => return false,
+        (0, b) | (b, 0) => b,
+        (a, b) => a.min(b),
+    };
+    private.saturating_mul(10) >= room.saturating_mul(7)
 }
 
 fn ram_idle_for(avail_phys: Option<u64>, keep: bool) -> u64 {
@@ -1081,9 +1097,19 @@ fn create() -> windows::core::Result<Host> {
             .and_then(|factory| factory.EnumAdapterByLuid::<IDXGIAdapter3>(device.GetAdapterLuid()))
             .ok();
         if let Some(desc) = adapter.as_ref().and_then(|a| a.GetDesc1().ok()) {
+            let rdna4 = desc.VendorId == 0x1002 && (0x7550..=0x75ff).contains(&desc.DeviceId);
+            victory_shader::emit::set_host_rdna4(rdna4);
+            if rdna4 {
+                // The AMD Windows compiler faults on a title compute shader when
+                // REUSE runs together with dead-code and constant-folding passes.
+                let passes = victory_shader::emit::passes::DEFAULT & !victory_shader::emit::passes::REUSE;
+                victory_shader::emit::set_host_shader_opt(passes);
+                tracing::info!(device = format_args!("{:#06x}", desc.DeviceId), passes, "RDNA4 host: shader REUSE pass disabled for compiler stability");
+            }
             let name = String::from_utf16_lossy(&desc.Description);
             tracing::info!(
                 adapter = name.trim_end_matches('\0'),
+                rdna4,
                 vendor = format_args!("{:#06x}", desc.VendorId),
                 device = format_args!("{:#06x}", desc.DeviceId),
                 vram_mb = desc.DedicatedVideoMemory >> 20,

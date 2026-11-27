@@ -118,7 +118,7 @@ use crate::{ShaderError, io, ir, resource, structure};
 
 pub use bitcode::census;
 pub use sampler::StaticSampler;
-pub use lower::{host_settings, set_host_max_wave, set_host_rdna, set_thread_max_wave};
+pub use lower::{host_settings, set_host_max_wave, set_host_rdna, set_host_rdna4, set_thread_max_wave};
 pub use rect::rect_list_gs;
 pub use shader::{
     MEMORY_FAULTS, MEMORY_PAGES, MEMORY_READ_ONLY, ROOT_CBV_SPACE, SAMPLER_SPACE, SLOT_FAULTS, SLOT_MEMORY, SLOT_STRIDES,
@@ -219,8 +219,17 @@ pub fn builder_bounds() -> bool {
 /// Part of the translation: the shader cache keys on it (`victory-gpu`'s
 /// does).
 pub fn shader_opt() -> u32 {
-    static PASSES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *PASSES.get_or_init(|| parse_shader_opt(std::env::var("VICTORY_SHADER_OPT").ok().as_deref()))
+    static ASKED: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    ASKED
+        .get_or_init(|| std::env::var("VICTORY_SHADER_OPT").ok().map(|v| parse_shader_opt(Some(&v))))
+        .unwrap_or_else(|| HOST_OPT.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+static HOST_OPT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(bitcode::opt::DEFAULT);
+
+/// The clean-up passes used when VICTORY_SHADER_OPT is unset; set by the host before translation.
+pub fn set_host_shader_opt(passes: u32) {
+    HOST_OPT.store(passes & bitcode::opt::ALL, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// On a host whose shaders run on the console's own kind of hardware (AMD
