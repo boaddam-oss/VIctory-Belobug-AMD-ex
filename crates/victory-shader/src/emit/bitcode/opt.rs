@@ -893,6 +893,12 @@ impl Module {
                     changed = true;
                     continue;
                 }
+                // Keep explicitly marked instructions distinct: the RDNA4
+                // raw descriptor handle must not be folded into another handle.
+                if self.kept.contains(&i) {
+                    kept.push(i);
+                    continue;
+                }
                 if passes & FOLD != 0
                     && let Some(v) = self.simplify(i, &mut changed)
                 {
