@@ -221,6 +221,8 @@ pub(crate) struct Module {
     funcs: Vec<Func>,
     func_ids: HashMap<String, u32>,
     insts: Vec<Inst>,
+    /// Instructions the clean-up passes leave as they are (see `keep_since`).
+    kept: std::collections::HashSet<u32>,
     blocks: Vec<Block>,
     mds: Vec<MdDef>,
     named: Vec<(String, Vec<Md>)>,
@@ -374,6 +376,17 @@ impl Module {
             self.globals[n as usize].init = Some(i);
         }
         g
+    }
+
+    /// How many instructions there are so far. Instructions made after this
+    /// mark can be protected from cleanup with `keep_since`.
+    pub fn mark(&self) -> u32 {
+        self.insts.len() as u32
+    }
+
+    /// Keep every instruction made since `mark` from folding or reuse.
+    pub fn keep_since(&mut self, mark: u32) {
+        self.kept.extend(mark..self.insts.len() as u32);
     }
 
     /// Notes what instruction `v` is for (see [`Tag`]); only when modules
